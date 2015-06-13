@@ -1,6 +1,7 @@
 # SDK-PHP-Getnet-Santander
 SDK em PHP para integração com o webservice da adquirente GETNET do grupo Santander.
 
+```php
 ## EXEMPLO DE AUTORIZAÇÃO
 $getnet = new Getnet();
 $getnet->setUsername("azpay");
@@ -25,7 +26,7 @@ $getnet->setUdf5("none");
 $getnet->setTranMCC("none");
 $getnet->setSoftDescriptor("none");
 $getnet->AuthorizationService();
-
+```
 
 
 Desenvolvido pela equipe AZPAY - www.azpay.com.br
