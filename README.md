@@ -4,6 +4,7 @@ SDK em PHP para integração com o webservice da adquirente GETNET do grupo Sant
 ```php
 ## EXEMPLO DE AUTORIZAÇÃO
 $getnet = new Getnet();
+$getnet->setEnvironment(1);
 $getnet->setUsername("azpay");
 $getnet->setPassword("#password#");
 $getnet->setMerchantID("1234567");
