@@ -20,6 +20,8 @@
  */
 class Getnet
 {
+
+    private $_environmentURL = '0';
     /*
     * Usuário de acesso
     */
@@ -105,11 +107,25 @@ class Getnet
     */
     private $_softDescriptor = NULL;
 
+    private $_nsu = NULL;
+    private $_auth = NULL;
+    private $_date = NULL;
+
     private $_errors;
     private $_urlRetorno;
     private $_ambiente = '';
     private $_tid;
     private $_transactionID;
+
+    public function setNsu($nsu){
+        return $this->_nsu = $nsu;
+    }
+    public function setAuth($auth){
+        return $this->_auth = $auth;
+    }
+    public function setDate($timestamp){
+        return $this->_date = date('dmY',$timestamp);
+    }
     /*
     * Usuário de acesso
     */
@@ -192,7 +208,7 @@ class Getnet
     * Nome do portador impresso no cartão.
     */
     public function setHolderName($holderName){
-        return $this->_holderName = $holderName;
+        return $this->_holderName =  $this->replaceAccents($holderName);
     }
     /*
     * Campos de apoio e alternativos na transação, qualquer conteúdo pode ser informado e recuperado nestas variáveis.
@@ -236,6 +252,45 @@ class Getnet
     public function setSoftDescriptor($softDescriptor){
         return $this->_softDescriptor = $softDescriptor;
     }
+    /*
+    * Transaçao ID
+    */
+    public function setTransactionID($transactionID){
+        return $this->_transactionID = $transactionID;
+    }
+
+
+    public function setEnvironment($ambiente)
+    {
+        switch ($ambiente) {
+            case '0':
+                $this->_environmentURL = '0';
+                break;
+            case '1':
+                $this->_environmentURL = 'https://cgws-hti.getnet.com.br:4443/eCommerceWS/1.1/CommerceService?wsdl'; //staging
+                break;
+            case '2':
+                $this->_environmentURL = 'https://cgws.getnet.com.br/eCommerceWS/1.1/CommerceService?wsdl'; // prod
+                break;
+            case '3':
+                $this->_environmentURL = 'https://cgws-hti.getnet.com.br:4443/eCommerceWS/1.1/AdministrationService?wsdl'; // staging admin
+                break;
+            case '4':
+                $this->_environmentURL = 'https://cgws.getnet.com.br/eCommerceWS/1.1/AdministrationService?wsdl'; // prod admin
+                break;
+            case '5':
+                $this->_environmentURL = 'https://scows-hti.getnet.com.br:4443/requestCancelWS/2.0/RequestCancelService?WSDL'; // prod admin
+                break;
+        }
+        $this->_ambiente = $ambiente;
+    }
+    public static function replaceAccents($str) {
+        $search = explode(",",
+            "ç,æ,œ,á,é,í,ó,ú,à,è,ì,ò,ù,ä,ë,ï,ö,ü,ÿ,â,ê,î,ô,û,å,ø,Ø,Å,Á,À,Â,Ä,È,É,Ê,Ë,Í,Î,Ï,Ì,Ò,Ó,Ô,Ö,Ú,Ù,Û,Ü,Ÿ,Ç,Æ,Œ");
+        $replace = explode(",",
+            "c,ae,oe,a,e,i,o,u,a,e,i,o,u,a,e,i,o,u,y,a,e,i,o,u,a,o,O,A,A,A,A,A,E,E,E,E,I,I,I,I,O,O,O,O,U,U,U,U,Y,C,AE,OE");
+        return str_replace($search, $replace, $str);
+    }
     /**
      * Retorna o nome do classe
      *
@@ -252,24 +307,46 @@ class Getnet
      * @access public
      * @return string
      */
-    public function setError($code)
+    public static function setError($code,$message='',$details='')
     {
-        $this->_errors =  $code;
-    }
+            $error = array();
+            $error['errorCode'] = '001';
+            $error['errorAcquirer'] = (string)$code;
+            $error['errorMessageAcquirer'] = (string)$code;
+            $error['errorMessage'] = (string)$message;
+            $error['errorMessageDetails'] = (string)$details;
+            return  json_decode(json_encode($error), FALSE);
+        }
     public function getError()
     {
-        if($this->_errors){
-            $error = array();
-            $error['codigo']  = $this->_errors;
-            $error['mensagem'] = ' - validado antes de enviar para GETNET';
-            return self::array2xml($error);
-        }
+        return $this->_errors;
     }
-    public function isError()
+    public function isValidTransacion()
     {
-        if(!empty($this->_errors))
+        $objectxml = $this->XMLResult2Object();
+        if(isset($objectxml[1]->errorCodeTag)){ // erro da aperadora de cartão
+            $this->_errors = $this->setError((string)$objectxml[1]->errorCodeTag,(string)$objectxml[1]->descriptionError,'Os erros foram reportados pela Getnet.');
+            return false;
+        }elseif (isset($objectxml[1]->wsErrorCode)) { // erro do webservice getnet
+            $this->_errors = $this->setError((string)$objectxml[1]->wsErrorCode,(string)$objectxml[1]->wsErrorText,'Os erros foram reportados pela Getnet.');
+            return false;
+        }elseif (isset($objectxml[2]->faultcode)) { // erro não tratavel
+            $this->_errors = $this->setError($objectxml[2]->faultcode,(string)$objectxml[2]->faultstring,'Erro na integração junto a Getnet.');
+            return false;
+        }elseif ($this->_errors){ //erros invocados em outros métodos
+           return false;
+        }elseif (isset($objectxml[0]->wsErrorCode)){ //erros invocados em outros métodos
+            $this->_errors = $this->setError($objectxml[0]->wsErrorCode,(string)$objectxml[0]->wsErrorText,'Erro na integração junto a Getnet.');
+            return false;
+        }elseif (isset($objectxml[0]->responseCode) && $objectxml[0]->responseCode != '00'){ //erros invocados em outros métodos
+            $this->_errors = $this->setError($objectxml[0]->responseCode,(string)$objectxml[0]->responseMessage,'Tentar novamente mais tarde.');
+            return false;
+        }elseif (isset($objectxml[0]->queryStatus->processingResultCode) && ($objectxml[0]->queryStatus->processingResultCode != '000' && $objectxml[0]->queryStatus->processingResultCode != '100') ){
+            $this->_errors = $this->setError($objectxml[0]->queryStatus->processingResultCode,(string)$objectxml[0]->queryStatus->processingResultMessage,'Verificar o erro informado pela GETNET.');
+            return false;
+        }else{
             return true;
-        else return false;
+        }
     }
     /**
      * Erro para chamadas a métodos inválidos.
@@ -374,17 +451,15 @@ class Getnet
     */
     private function sendXML($action)
     {
-        if ($this->_ambiente == 'admin') {
-            $url = 'https://cgws-hti.getnet.com.br:4443/eCommerceWS/1.1/AdministrationService?wsdl';
-        }else{
-            $url = 'https://cgws-hti.getnet.com.br:4443/eCommerceWS/1.1/CommerceService?wsdl';
+        if($this->_ambiente == '0'){
+            print 'Getnet is disabled';exit;
         }
         $xml_post_string = '<?xml version="1.0" encoding="utf-8"?>
-                            <soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
-                              <soap:Body>
+                            <soapenv:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:br="http://br.com.getnet.ecommerce.ws.service/" xmlns:mx="http://br.com.getnet.reqcanc.ws.service/">
+                              <soapenv:Body>
                               '.str_replace('<?xml version="1.0"?>','',$this->_xml).'
-                              </soap:Body>
-                            </soap:Envelope>';
+                              </soapenv:Body>
+                            </soapenv:Envelope>';
        $headers = array(
                             "Content-type: text/xml;charset=\"utf-8\"",
                             "Accept: text/xml",
@@ -395,11 +470,12 @@ class Getnet
         );
         $ch = curl_init();
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, 0);
-        curl_setopt($ch, CURLOPT_URL, $url);
+        curl_setopt($ch, CURLOPT_URL, $this->_environmentURL);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_USERPWD, $this->_username.":".$this->_password); // username and password - declared at the top of the doc
         curl_setopt($ch, CURLOPT_HTTPAUTH, CURLAUTH_ANY);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 25);
+        curl_setopt($ch, CURLOPT_SSLVERSION, 6);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 60);
         curl_setopt($ch, CURLOPT_POST, true);
         curl_setopt($ch, CURLOPT_POSTFIELDS, $xml_post_string); // the SOAP request
         curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
@@ -420,13 +496,29 @@ class Getnet
      */
     public function XMLResult2Object()
     {
-        if(strlen($this->_xml_retorno) > 0){
-            $xml = simplexml_load_string($this->_xml_retorno,NULL,NULL,"http://schemas.xmlsoap.org/soap/envelope/");
+
+
+        if(!empty($this->_xml_retorno) > 0){
+            libxml_use_internal_errors(true);
+            $xml = simplexml_load_string(strtr($this->_xml_retorno, array(' xmlns:'=>' ')),NULL,NULL,"http://schemas.xmlsoap.org/soap/envelope/");
+            if(!isset($xml->xpath)){
+                $xml =simplexml_load_string(strtr($this->_xml_retorno, array(' xmlns:'=>' ')));
+            }
+
+            if(is_object($xml)){
             $xml->registerXPathNamespace('S', 'http://schemas.xmlsoap.org/soap/envelope/');
             $xml->registerXPathNamespace('ns0', 'http://br.com.getnet.ecommerce.ws.service');
             $xpath = $xml->xpath('//result');
+                if(empty($xpath)){ # caso seja um erro não tratavel
+                    $xpath = $xml->xpath('//*');
+                }
             return $xpath;
         }else{
+                $this->_errors = $this->setError(101,'Falha ao receber os dados do servidor da GETNET','Resposta inválida do servidor da GETNET.');
+                return false;
+            }
+        }else{
+            $this->_errors = $this->setError(101,'Falha ao receber os dados do servidor da GETNET','Tente novamente em alguns segundos.');
             return false;
         }
     }
@@ -543,12 +635,53 @@ class Getnet
     * Executa o estorno de uma transação Autorizada ou Confirmada.
     * Somente é possível estornar uma transação confirmada (Capturada) no dia corrente.
     */
-    public function CancellationService()
+
+
+    public function RefundService()
     {
-        $_xml = '<br:cancellationService></cancellationService>';
+        if($this->_ambiente == 2){
+            $this->_environmentURL = 'https://scows.getnet.com.br:4443/requestCancelWS/2.0/RequestCancelService?WSDL';
+//            $this->setUsername('##');
+//            $this->setPassword('###');
+        }else{
+            $this->_environmentURL = 'https://scows-hti.getnet.com.br:4443/requestCancelWS/2.0/RequestCancelService?WSDL';
+//            $this->setUsername('##');
+//            $this->setPassword('###');
+        }
+        $_xml = '<requestCancelTransation></requestCancelTransation>';
         $xml = new SimpleXMLElement($_xml);
         $arg = $xml->addChild('arg0','');
-        $arg->addAttribute('xmlns', '');
+        $authentication = $arg->addChild('authentication','');
+        $authentication->addChild('username', $this->_username);
+        $authentication->addChild('password', $this->_password);
+        $cancelTransaction = $arg->addChild('cancelTransaction','');
+        $cancelTransaction->addChild('branch',$this->_merchantID);
+        $cancelTransaction->addChild('terminal',$this->_terminalID);
+        $cancelTransaction->addChild('autorization',$this->_auth);
+        $cancelTransaction->addChild('date',$this->_date);
+        $cancelTransaction->addChild('modality',($this->_instNum == 1) ? 'V' : 'P');
+        $cancelTransaction->addChild('amount',$this->_amount);
+        $cancelTransaction->addChild('currency_code',$this->_currencycode);
+        $cancelTransaction->addChild('inst_num',$this->_instNum);
+        $cancelTransaction->addChild('nsu',(integer)$this->_nsu);
+        $cancelTransaction->addChild('cancel_amount',$this->_amount);
+        $cancelTransaction->addChild('client_key',$this->_merchantTrackID);
+        $this->_xml = str_replace("requestCancelTransation","mx:requestCancelTransation",$xml->asXML());
+
+        return $this->sendXML('RequestCancelTransation');
+    }
+
+
+    /**
+     * CancellationService
+     * Executa o estorno de uma transação Autorizada ou Confirmada.
+     * Somente é possível estornar uma transação confirmada (Capturada) no dia corrente.
+     */
+    public function CancellationService()
+    {
+        $_xml = '<cancellationService></cancellationService>';
+        $xml = new SimpleXMLElement($_xml);
+        $arg = $xml->addChild('arg0','');
         $authentication = $arg->addChild('authentication','');
             $authentication->addChild('username', $this->_username);
             $authentication->addChild('password', $this->_password);
@@ -560,9 +693,68 @@ class Getnet
                 $cancel2->addChild('merchantTrackID',$this->_merchantTrackID);
                 $cancel2->addChild('amount',$this->_amount);
                 $cancel2->addChild('currencycode',$this->_currencycode);
-        $this->_xml = htmlspecialchars_decode($xml->asXML());
-        return $this->sendXML('cancellationService');
+        $this->_xml = str_replace("cancellationService","br:cancellationService",$xml->asXML());
+        return $this->sendXML('br:cancellationService');
     }
+    /**
+     * QueryCancelTransationByProtocol
+     * Executa uma operação de Consulta da transação de Cancelamento.
+     */
+    public function QueryCancelTransationByClientKey()
+    {
+        if($this->_ambiente == 2){
+            $this->_environmentURL = 'https://scows.getnet.com.br:4443/requestCancelWS/2.0/RequestCancelService?WSDL';
+//            $this->setUsername('##');
+//            $this->setPassword('###');
+        }else{
+            $this->_environmentURL = 'https://scows-hti.getnet.com.br:4443/requestCancelWS/2.0/RequestCancelService?WSDL';
+//            $this->setUsername('##');
+//            $this->setPassword('###');
+        }
+        $_xml = '<queryCancelTransationByClientKey></queryCancelTransationByClientKey>';
+        $xml = new SimpleXMLElement($_xml);
+        $arg = $xml->addChild('arg0','');
+        $arg->addAttribute('xmlns', '');
+        $authentication = $arg->addChild('authentication','');
+        $authentication->addChild('username', $this->_username);
+        $authentication->addChild('password', $this->_password);
+        $queryByClientKey = $arg->addChild('queryByClientKey','');
+        $queryByClientKey->addChild('branch', $this->_merchantID);
+        $queryByClientKey->addChild('client_key',$this->_merchantTrackID);
+        $this->_xml = str_replace("queryCancelTransationByClientKey","mx:queryCancelTransationByClientKey",$xml->asXML());
+        return $this->sendXML('queryCancelTransationByClientKey');
+    }
+    /**
+     * QueryCancelTransationByProtocol
+     * Executa uma operação de Consulta da transação de Cancelamento.
+     */
+    public function QueryCancelTransationByProtocol($protocol)
+    {
+
+
+        if($this->_ambiente == 2){
+            $this->_environmentURL = 'https://scows.getnet.com.br:4443/requestCancelWS/2.0/RequestCancelService?WSDL';
+//            $this->setUsername('##');
+//            $this->setPassword('###');
+        }else{
+            $this->_environmentURL = 'https://scows-hti.getnet.com.br:4443/requestCancelWS/2.0/RequestCancelService?WSDL';
+//            $this->setUsername('##');
+//            $this->setPassword('###');
+        }
+
+        $_xml = '<queryCancelTransationByProtocol></queryCancelTransationByProtocol>';
+        $xml = new SimpleXMLElement($_xml);
+        $arg = $xml->addChild('arg0','');
+        $arg->addAttribute('xmlns', '');
+        $authentication = $arg->addChild('authentication','');
+        $authentication->addChild('username', $this->_username);
+        $authentication->addChild('password', $this->_password);
+        $queryByProtocol = $arg->addChild('queryByProtocol','');
+        $queryByProtocol->addChild('protocol',$protocol);
+        $this->_xml = str_replace("queryCancelTransationByProtocol","mx:queryCancelTransationByProtocol",$xml->asXML());
+        return $this->sendXML('queryCancelTransationByProtocol');
+    }
+
     /**
     * QueryDataService
     * Executa uma operação de Consulta da transação.
@@ -579,8 +771,8 @@ class Getnet
             $authentication->addChild('merchantID', $this->_merchantID);
         $query = $arg->addChild('query','');
             $query2 = $query->addChild('query','');
-                $cquery2->addChild('terminalID',$this->_terminalID);
-                $cquery2->addChild('merchantTrackID',$this->_merchantTrackID);
+                $query2->addChild('terminalID',$this->_terminalID);
+                $query2->addChild('merchantTrackID',$this->_merchantTrackID);
         $this->_xml = htmlspecialchars_decode($xml->asXML());
         return $this->sendXML('queryDataService');
     }
@@ -601,7 +793,7 @@ class Getnet
             $authentication->addChild('password', $this->_password);
             $authentication->addChild('merchantID', $this->_merchantID);
         $cardVerification = $arg->addChild('cardVerification','');
-            $cardVerification2 = $authorizations->addChild('cardVerification','');
+            $cardVerification2 = $authentication->addChild('cardVerification','');
                 $cardVerification2->addChild('terminalID',$this->_terminalID);
                 $cardVerification2->addChild('merchantTrackID',$this->_merchantTrackID);
                 $cardVerification2->addChild('currencycode',$this->_currencycode);
@@ -618,18 +810,52 @@ class Getnet
     * ChangeAuthenticationService
     * Por segurança ao cadastrar uma nova Loja Virtual, a GetNet obriga a Loja Virtual a alterar seu código de acesso antes de iniciar o fluxo transacional.
     */
-    public function ChangeAuthenticationService($newPassword)
+    public function ChangeAuthenticationService($oldPass,$newPassword,$env)
     {
+        if($env == 'prod'){
+            $this->_environmentURL = 'https://cgws.getnet.com.br/eCommerceWS/1.1/AdministrationService?wsdl';
+        }else{
+            $this->_environmentURL = 'https://cgws-hti.getnet.com.br:4443/eCommerceWS/1.1/AdministrationService?wsdl';
+        }
+
         $_xml = '<changeAuthenticationService xmlns="http://br.com.getnet.ecommerce.ws.service/"></changeAuthenticationService>';
         $xml = new SimpleXMLElement($_xml);
         $arg = $xml->addChild('arg0','');
         $arg->addAttribute('xmlns', '');
         $arg->addChild('username',$this->_username);
         $arg->addChild('merchantID',$this->_merchantID);
-        $arg->addChild('currentPassword',$this->_password);
+        $arg->addChild('currentPassword',$oldPass);
         $arg->addChild('newPassword',$newPassword);
-        $this->_xml = htmlspecialchars_decode($xml->asXML());
-        $this->_ambiente = 'admin';
-        return $this->sendXML('changeAuthenticationService');
+        $this->_xml = $xml->asXML();
+
+        return $this->setXmlRetorno($this->sendXML('changeAuthenticationService'));
+    }
+    /**
+     * ChangeAuthenticationService
+     * Por segurança ao cadastrar uma nova Loja Virtual, a GetNet obriga a Loja Virtual a alterar seu código de acesso antes de iniciar o fluxo transacional.
+     */
+    public function ChangeAuthenticationServiceRefund($oldPass,$newPassword,$env)
+    {
+        if($env == 'prod'){
+            $this->_environmentURL = 'https://scows.getnet.com.br:4443/requestCancelWS/2.0/AdministrationService?WSDL';
+//            $this->setUsername('##');
+//            $this->setPassword('###');
+        }else{
+            $this->_environmentURL = 'https://scows-hti.getnet.com.br:4443/requestCancelWS/2.0/AdministrationService?WSDL';
+//            $this->setUsername('##');
+//            $this->setPassword('###');
+
+        }
+        $_xml = '<changeAuthenticationService></changeAuthenticationService>';
+        $xml = new SimpleXMLElement($_xml);
+        $arg = $xml->addChild('arg0','');
+        $arg->addAttribute('xmlns', '');
+        $arg->addChild('username',$this->_username);
+        $arg->addChild('merchantID',$this->_merchantID);
+        $arg->addChild('currentPassword',$oldPass);
+        $arg->addChild('newPassword',$newPassword);
+        $this->_xml = str_replace("changeAuthenticationService","mx:changeAuthenticationService",$xml->asXML());
+
+        return $this->setXmlRetorno($this->sendXML('changeAuthenticationService'));
     }
 }
