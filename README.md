@@ -1,4 +1,13 @@
-# SDK-PHP-Getnet-Santander
+
+## A GETNET lançou uma nova versão da sua plataforma
+
+Novo projeto em andamento
+https://github.com/brunopazz/GetnetSDK
+
+
+### VERSÃO ANTIGA 
+
+### SDK-PHP-Getnet-Santander
 SDK em PHP para integração com o webservice da adquirente GETNET do grupo Santander.
 
 ```php
